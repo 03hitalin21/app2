@@ -29,7 +29,57 @@ jobs:
 
     - name: Build release AAB (recommended for Play Store)
       run: ./gradlew bundleRelease
+    # ... (your existing checkout, setup-java, chmod gradlew, etc.)
 
+    - name: Build Release AAB (signed)
+      run: ./gradlew bundleRelease
+      env:
+        # These inject secrets into Gradle for signing
+        ANDROID_KEYSTORE_BASE64: ${{ secrets.SIGNING_KEY_BASE64 }}
+        ANDROID_KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+        ANDROID_KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+        ANDROID_KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+
+    # Optional: If signing is configured in build.gradle.kts to read from env vars/properties
+    # Or use a signing action like r0adkll/sign-android-release if preferred
+
+    - name: Download bundle-signer tool
+      run: |
+        wget https://github.com/cafebazaar/bundle-signer/releases/download/v${{ secrets.BUNDLE_SIGNER_VERSION || '0.1.13' }}/bundlesigner-${{ secrets.BUNDLE_SIGNER_VERSION || '0.1.13' }}.jar -O bundlesigner.jar
+
+    - name: Generate .bin file for Cafe Bazaar
+      run: |
+        java -jar bundlesigner.jar genbin \
+          -v \
+          --bundle app/build/outputs/bundle/release/app-release.aab \
+          --bin ./output/ \
+          --v2-signing-enabled true \
+          --v3-signing-enabled false \
+          --ks signing.keystore \
+          --ks-pass env:KS_PASS \
+          --ks-key-alias ${{ secrets.KEY_ALIAS }} \
+          --key-pass env:KEY_PASS
+      env:
+        KS_PASS: ${{ secrets.KEYSTORE_PASSWORD }}
+        KEY_PASS: ${{ secrets.KEY_PASSWORD }}
+
+    # First decode the base64 keystore (bundle-signer needs the actual .jks file)
+    - name: Decode keystore from secret (before bundle-signer step)
+      run: |
+        echo "${{ secrets.SIGNING_KEY_BASE64 }}" | base64 --decode > signing.keystore
+      if: always()  # Run even if previous fails, for debugging
+
+    - name: Upload .bin artifact (for download)
+      if: success()
+      uses: actions/upload-artifact@v4
+      with:
+        name: cafe-bazaar-bin
+        path: output/*.bin
+        retention-days: 7
+
+    # Optional: If you want full automation, add upload to Bazaar using their API
+    # There's a marketplace action: https://github.com/marketplace/actions/cafe-bazaar-release
+    # But it currently supports .apk/.aab directly — check if .bin is added, or use curl with API secret
     - name: Build release APK (if you prefer classic APK)
       run: ./gradlew assembleRelease
 
